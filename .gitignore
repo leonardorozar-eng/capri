@@ -1,0 +1,7 @@
+cache/
+*.asar
+*.exe
+config.json
+token.json
+*.log
+state.json
