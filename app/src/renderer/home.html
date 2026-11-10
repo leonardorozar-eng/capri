@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <title>Capri</title>
+  <link rel="stylesheet" href="home.css">
+</head>
+<body>
+  <svg id="hud" class="hud" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <polygon class="plate" points="6,8 74,8 86,18 86,58 98,72 70,84 58,74 6,74 6,18"/>
+    <polygon class="edge" points="6,8 74,8 86,18 86,58 98,72 70,84 58,74 6,74 6,18"/>
+    <polygon class="plate" points="66,88 90,80 96,88 72,96"/>
+    <polygon class="edge" points="66,88 90,80 96,88 72,96"/>
+  </svg>
+  <p id="callLine" class="call-line" hidden></p>
+  <button type="button" id="callBack" class="call-back" hidden>Janela normal</button>
+  <div class="drag" aria-hidden="true"></div>
+  <div class="caption">
+    <button type="button" id="winMin" class="win" data-tip="Minimizar" aria-label="Minimizar">–</button>
+    <button type="button" id="winMax" class="win" data-tip="Aumentar" aria-label="Aumentar">□</button>
+    <button type="button" id="winClose" class="win win-close" data-tip="Fechar" aria-label="Fechar">×</button>
+  </div>
+  <div class="stage">
+    <canvas id="portrait" width="2" height="2"></canvas>
+  </div>
+  <div id="icons" class="icons"></div>
+  <section class="chat">
+    <div id="log" class="log"></div>
+    <div id="actions" class="actions"></div>
+  </section>
+  <p id="usage" class="usage"></p>
+  <form id="talk">
+    <div id="modes" class="modes"></div>
+    <div class="compose">
+      <input id="box" autocomplete="off" maxlength="2000">
+      <button type="button" id="web"></button>
+      <button type="submit" id="send"></button>
+    </div>
+  </form>
+  <div id="tip" class="tip" hidden></div>
+  <script src="home.js"></script>
+</body>
+</html>
