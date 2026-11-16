@@ -51,6 +51,7 @@ const COPY = {
     deepHint: 'Resposta com mais cuidado e um pouco mais de detalhe',
     usageOut: 'fora da memória',
     usageLocal: 'memória só aparece no modelo local',
+    brain: 'Memória',
     winMin: 'Minimizar',
     winMax: 'Aumentar',
     winRestore: 'Restaurar',
@@ -103,6 +104,7 @@ const COPY = {
     deepHint: 'A more careful reply, with a little more detail',
     usageOut: 'not in memory',
     usageLocal: 'memory is only shown for the local model',
+    brain: 'Memory',
     winMin: 'Minimize',
     winMax: 'Maximize',
     winRestore: 'Restore',
@@ -387,6 +389,7 @@ function paintChrome() {
 }
 
 let windowMax = false;
+let brain = null;
 
 function paintWindowButtons() {
   const minBtn = $('winMin');
@@ -567,6 +570,7 @@ $('winClose').addEventListener('click', () => host.homeWindow('close'));
 host.onHomeWindowState((next) => {
   windowMax = Boolean(next?.maximized);
   paintWindowButtons();
+  brain?.place();
 });
 
 host.onHomeState((next) => {
@@ -868,6 +872,7 @@ class Portrait {
     this.canvas.style.height = `${side}px`;
     this.canvas.width = Math.floor(side * this.dpr);
     this.canvas.height = Math.floor(side * this.dpr);
+    brain?.place();
   }
 
   drawHeart(ctx, x, y, s, alpha) {
@@ -989,3 +994,211 @@ class Portrait {
 
 const portrait = new Portrait($('portrait'));
 host.onHomeArrive(() => portrait.begin());
+
+const BRAIN_COLOR = {
+  capri: '#ff4fd8',
+  person: '#3ef0ff',
+  memory: '#d7a4ff',
+  day: '#ffb45e',
+  note: '#f6e9ff',
+};
+
+class Brain {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.nodes = new Map();
+    this.edges = [];
+    this.seenEdges = new Map();
+    this.sig = '';
+    this.viewW = 0;
+    this.viewH = 0;
+    this.dpr = 1;
+    this.place();
+    if (canvas.parentElement && typeof ResizeObserver === 'function') {
+      new ResizeObserver(() => this.place()).observe(canvas.parentElement);
+    }
+    window.addEventListener('resize', () => this.place());
+    requestAnimationFrame((now) => this.loop(now));
+  }
+
+  place() {
+    const stage = this.canvas.parentElement;
+    if (!stage) return;
+    const portraitBox = document.getElementById('portrait');
+    const side = portraitBox ? portraitBox.offsetWidth : 0;
+    const gutter = Math.floor((stage.clientWidth - side) / 2);
+    const show = !document.body.classList.contains('call') && side >= 40 && gutter >= 168;
+    this.canvas.hidden = !show;
+    if (!show) return;
+    const width = Math.max(120, gutter - 18);
+    const height = Math.max(80, stage.clientHeight - 16);
+    this.canvas.style.width = `${width}px`;
+    this.canvas.style.height = `${height}px`;
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    const pw = Math.floor(width * this.dpr);
+    const ph = Math.floor(height * this.dpr);
+    if (this.canvas.width !== pw || this.canvas.height !== ph) {
+      this.canvas.width = pw;
+      this.canvas.height = ph;
+    }
+    this.viewW = width;
+    this.viewH = height;
+  }
+
+  setGraph(payload) {
+    const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+    const edges = Array.isArray(payload?.edges) ? payload.edges : [];
+    const sig = `${nodes.map((node) => `${node.id}:${node.kind}:${node.title}:${node.degree}`).join('|')}|${edges.map((edge) => `${edge.a}>${edge.b}`).join('|')}`;
+    if (sig === this.sig) return;
+    this.sig = sig;
+    const now = performance.now();
+    const anchor = this.nodes.get('capri');
+    const cx = anchor ? anchor.x : (this.viewW || 240) * 0.62;
+    const cy = anchor ? anchor.y : (this.viewH || 240) * 0.5;
+    const next = new Map();
+    nodes.forEach((node, index) => {
+      const prev = this.nodes.get(node.id);
+      if (prev) {
+        next.set(node.id, { ...prev, title: node.title, kind: node.kind, degree: node.degree || 0 });
+        return;
+      }
+      const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2;
+      next.set(node.id, {
+        ...node,
+        degree: node.degree || 0,
+        x: cx + Math.cos(angle) * 28,
+        y: cy + Math.sin(angle) * 28,
+        vx: Math.cos(angle) * 1.4,
+        vy: Math.sin(angle) * 1.4,
+        born: now,
+      });
+    });
+    this.nodes = next;
+    this.edges = edges.filter((edge) => edge && edge.a && edge.b);
+    for (const edge of this.edges) {
+      const key = `${edge.a}>${edge.b}`;
+      if (!this.seenEdges.has(key)) this.seenEdges.set(key, now);
+    }
+  }
+
+  step() {
+    const list = [...this.nodes.values()];
+    if (list.length < 2 || this.viewW < 40) return;
+    const cx = this.viewW * 0.62;
+    const cy = this.viewH * 0.5;
+    for (const node of list) {
+      node.vx += (cx - node.x) * 0.012;
+      node.vy += (cy - node.y) * 0.012;
+    }
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i];
+        const b = list[j];
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let dist = Math.hypot(dx, dy) || 0.01;
+        if (dist < 1) {
+          dx = 1;
+          dy = 0;
+          dist = 1;
+        }
+        const push = Math.min(180, 920 / (dist * dist));
+        const ux = dx / dist;
+        const uy = dy / dist;
+        a.vx += ux * push;
+        a.vy += uy * push;
+        b.vx -= ux * push;
+        b.vy -= uy * push;
+      }
+    }
+    for (const edge of this.edges) {
+      const a = this.nodes.get(edge.a);
+      const b = this.nodes.get(edge.b);
+      if (!a || !b) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy) || 0.01;
+      const pull = (dist - 78) * 0.012;
+      const ux = dx / dist;
+      const uy = dy / dist;
+      a.vx += ux * pull;
+      a.vy += uy * pull;
+      b.vx -= ux * pull;
+      b.vy -= uy * pull;
+    }
+    const pad = 28;
+    for (const node of list) {
+      node.vx *= 0.82;
+      node.vy *= 0.82;
+      node.x = Math.min(this.viewW - pad, Math.max(pad, node.x + node.vx));
+      node.y = Math.min(this.viewH - pad, Math.max(pad + 16, node.y + node.vy));
+    }
+  }
+
+  draw(now) {
+    if (this.canvas.hidden || this.viewW < 40) return;
+    const ctx = this.ctx;
+    const dpr = this.dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, this.viewW, this.viewH);
+    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.fillStyle = 'rgba(185, 163, 201, 0.9)';
+    ctx.fillText(copy.brain || 'Memória', 10, 16);
+    const list = [...this.nodes.values()];
+    if (!list.length) {
+      ctx.fillStyle = 'rgba(246, 233, 255, 0.7)';
+      ctx.fillText('sem notas ainda', 10, 36);
+      return;
+    }
+    for (const edge of this.edges) {
+      const a = this.nodes.get(edge.a);
+      const b = this.nodes.get(edge.b);
+      if (!a || !b) continue;
+      const age = now - (this.seenEdges.get(`${edge.a}>${edge.b}`) || now);
+      const alpha = Math.min(0.72, 0.15 + age / 700);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const bend = Math.min(18, Math.hypot(dx, dy) * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(mx - dy * 0.08, my + dx * 0.08 + bend * 0.15, b.x, b.y);
+      ctx.strokeStyle = `rgba(62, 240, 255, ${alpha})`;
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    }
+    const occupied = new Set();
+    for (const node of list) {
+      const pulse = Math.max(0, 1 - (now - (node.born || 0)) / 1200);
+      const wobble = Math.sin(now / 900 + node.x) * 0.6;
+      const radius = 4.5 + Math.min(8, (node.degree || 0) * 1.5) + pulse * 3;
+      const color = BRAIN_COLOR[node.kind] || BRAIN_COLOR.note;
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8 + pulse * 10;
+      ctx.arc(node.x, node.y + wobble, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      if (list.length > 28 && (node.degree || 0) < 2 && node.kind === 'note') continue;
+      const label = String(node.title || '').slice(0, 22);
+      const cell = `${Math.round(node.x / 46)}:${Math.round((node.y - 12) / 16)}`;
+      if (occupied.has(cell)) continue;
+      occupied.add(cell);
+      ctx.fillStyle = 'rgba(246, 233, 255, 0.92)';
+      ctx.fillText(label, node.x + radius + 3, node.y - radius + wobble);
+    }
+  }
+
+  loop(now) {
+    this.step();
+    this.draw(now);
+    requestAnimationFrame((next) => this.loop(next));
+  }
+}
+
+brain = new Brain($('brain'));
+host.onObsidianGraph((payload) => brain.setGraph(payload));
+host.obsidianGraph().then((payload) => brain.setGraph(payload)).catch(() => {});

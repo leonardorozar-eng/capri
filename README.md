@@ -15,6 +15,7 @@ Uso pessoal entre amigos. Não vende e não cobra acesso. O texto da licença es
 - Spotify na linha Música, ponte para o Grok quando o pedido é um trabalho no PC, carinho na cabeça, cursor da overlay e até quatro clones.
 - Animações 2D do [lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop) v0.8.0. O `install.ps1` baixa essas folhas na hora. Os créditos estão em `CREDITOS.md`.
 - A voz fica desligada. O modelo Kokoro não vem neste repositório. Veja `VOZ-RASCUNHO.md`.
+- Memória no Obsidian. Na primeira abertura, cada PC cria o próprio cofre em `OneDrive\Documentos\Capri`, ou em `Documents\Capri` se essa pasta do OneDrive não existir. Não copia o cofre de outro computador. As notas não vão para este repositório. Com a janela aumentada, o grafo aparece no espaço vazio à esquerda da visão dela.
 
 ## O que não vem
 

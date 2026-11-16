@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('host', {
   onHomeUsage: on('home:usage'),
   onHomePlay: on('home:play'),
   onHomeArrive: on('home:arrive'),
+  obsidianGraph: () => ipcRenderer.invoke('obsidian:graph'),
+  onObsidianGraph: on('obsidian:graph'),
   installHooks: () => ipcRenderer.invoke('hooks:install'),
   claudeFound: () => ipcRenderer.invoke('claude:found'),
   openClaudeHelp: () => ipcRenderer.send('claude:help'),

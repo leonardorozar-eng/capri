@@ -23,6 +23,7 @@ const system = require('./system');
 const launch = require('./launch');
 const files = require('./files');
 const webnote = require('./webnote');
+const obsidian = require('./obsidian');
 const { ASSISTANTS, assistant } = require('./assistants');
 const activeAssistant = () => assistant(config.load().assistant); // Claude Code or Codex
 const activeHooks = () => activeAssistant().hooks;
@@ -327,6 +328,9 @@ function rendererConfig() {
 
 function updateConfig(patch) {
   config.save(patch);
+  if ('memories' in patch || 'userName' in patch) {
+    try { obsidian.syncConfig(config.load()); } catch (err) { console.error('[capri] obsidian:', err.message); }
+  }
   if ('rest' in patch) {
     fitOverlay(); // the taskbar in her window or not
     windowWatch?.refresh();
@@ -657,6 +661,7 @@ function talkNote(kind, extra) {
   if (kind === 'fast') return '(Note for you, never repeat it: answer in one or two short sentences.)';
   if (kind === 'deep') return '(Note for you, never repeat it: answer with a little more care and detail, in your own voice, not a long essay.)';
   if (kind === 'web') return `(Note for you, never repeat it: internet notes, use them only if they help, do not invent past them: ${extra})`;
+  if (kind === 'vault') return `(Note for you, never repeat it: notes from the user's Obsidian vault, which is your memory. Use them when they help you answer. Never mention files, wikilinks, or that a note told you. If they do not help, ignore them: ${extra})`;
   return '';
 }
 
@@ -996,6 +1001,7 @@ function openHome() {
     if (!homeWin || homeWin.isDestroyed()) return;
     pushHome();
     pushWindowButtons();
+    homeWin.webContents.send('obsidian:graph', obsidian.graph());
     startUsage();
   });
   homeWin.loadURL('capri://app/src/renderer/home.html');
@@ -1124,6 +1130,12 @@ function registerIpc() {
       const wantWeb = request?.web != null ? Boolean(request.web) : Boolean(cfg.webSearch);
       let outbound = Array.isArray(messages) ? messages.map((message) => ({ ...message })) : [];
       const model = pickModel(cfg);
+      try {
+        const memoryNote = obsidian.recall(lastUserQuestion(outbound));
+        if (memoryNote) outbound = withTalkNote(outbound, talkNote('vault', memoryNote));
+      } catch (err) {
+        console.error('[capri] obsidian recall:', err.message);
+      }
       if (wantWeb && llm.isLocal(cfg.provider, cfg, model)) {
         const query = String(request?.query || lastUserQuestion(outbound)).replace(/\s+/g, ' ').trim().slice(0, 180);
         const note = query ? await webnote.webNote(query).catch(() => '') : '';
@@ -1132,6 +1144,7 @@ function registerIpc() {
       if (think !== 'medium') outbound = withTalkNote(outbound, talkNote(think));
       const text = await chatWithFallback(cfg, outbound, send, abort.signal, () => streamed, think);
       if (cfg.provider === 'claude') saveMemory({ claude: llm.claudeMemory() });
+      try { obsidian.journal(lastUserQuestion(messages), text); } catch (err) { console.error('[capri] obsidian journal:', err.message); }
       return { ok: true, text };
     } catch (err) {
       return { ok: false, error: abort.signal.aborted ? 'stopped' : err.message, code: err.code || null };
@@ -1173,6 +1186,7 @@ function registerIpc() {
     const provider = cfg.provider === 'ollama' && ollama.isCloud(model) ? 'Ollama' : llm.PROVIDERS[cfg.provider]?.label || cfg.provider;
     return { local: llm.isLocal(cfg.provider, cfg, model), provider, model };
   });
+  ipcMain.handle('obsidian:graph', () => obsidian.graph());
   ipcMain.handle('chat:memory', () => readMemory().history || []);
   ipcMain.on('chat:remember', (_e, history) => Array.isArray(history) && saveMemory({ history }));
   ipcMain.on('chat:ollama', () => shell.openExternal(OLLAMA_SITE));
@@ -1532,6 +1546,18 @@ function main() {
     if (!['codex', 'claude'].includes(config.load().assistant)) config.save({ assistant: activeAssistant().id });
     serveProtocol();
     registerIpc();
+    try {
+      obsidian.start({
+        userData: app.getPath('userData'),
+        name: config.load().userName,
+        onChange: (payload) => {
+          if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('obsidian:graph', payload);
+        },
+      });
+      obsidian.syncConfig(config.load());
+    } catch (err) {
+      console.error('[capri] obsidian:', err.message);
+    }
     createOverlay();
     createTray();
     windowWatch = startWindowWatch({
