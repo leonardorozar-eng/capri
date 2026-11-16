@@ -7,6 +7,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+
+// The vault that already exists syncs only with this Microsoft account.
+// Any other PC gets an empty vault of its own.
+const OWNER_EMAIL = 'alexandrebrancozelia@gmail.com';
 
 const STOP = new Set(`que com para uma uns umas por dos das dos ela ele voce voces seu sua seus suas nao sim
 the and you your her his she they them this that with from are was were have has not just like
@@ -57,10 +62,40 @@ function saveState(patch) {
   }
 }
 
-function defaultVault() {
-  const oneDrive = path.join(os.homedir(), 'OneDrive', 'Documentos');
-  const base = fs.existsSync(oneDrive) ? oneDrive : path.join(os.homedir(), 'Documents');
-  return path.join(base, 'Capri');
+function regValue(key, name) {
+  let buf;
+  try {
+    buf = execFileSync('reg.exe', ['query', key, '/v', name], { windowsHide: true });
+  } catch {
+    return '';
+  }
+  let text = buf.toString('utf16le');
+  if (!text.includes('REG_SZ')) text = buf.toString('utf8');
+  const line = text.split(/\r?\n/).find((row) => row.includes(name) && row.includes('REG_SZ'));
+  if (!line) return '';
+  const at = line.indexOf('REG_SZ');
+  return line.slice(at + 'REG_SZ'.length).trim();
+}
+
+function oneDriveAccount() {
+  const key = 'HKCU\\Software\\Microsoft\\OneDrive\\Accounts\\Personal';
+  return {
+    email: regValue(key, 'UserEmail'),
+    folder: regValue(key, 'UserFolder'),
+  };
+}
+
+function isOwnerAccount(account) {
+  return fold(account?.email) === fold(OWNER_EMAIL);
+}
+
+function chooseVault() {
+  const account = oneDriveAccount();
+  if (isOwnerAccount(account) && account.folder) {
+    return path.join(account.folder, 'Documentos', 'Capri');
+  }
+  const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  return path.join(local, 'Capri', 'cofre');
 }
 
 function personName() {
@@ -457,9 +492,12 @@ function start(options) {
   onChange = typeof options?.onChange === 'function' ? options.onChange : onChange;
   preferredName = String(options?.name || preferredName || '').trim();
   const state = loadState();
-  vault = state.vault && fs.existsSync(state.vault) ? state.vault : defaultVault();
-  personFile = state.personFile || `${personName()}.md`;
+  const mine = isOwnerAccount(oneDriveAccount());
+  vault = chooseVault();
   fs.mkdirSync(vault, { recursive: true });
+  const savedPerson = state.personFile && fs.existsSync(path.join(vault, state.personFile)) ? state.personFile : '';
+  const keptPerson = fs.existsSync(path.join(vault, 'Leonardo.md')) ? 'Leonardo.md' : '';
+  personFile = mine ? (savedPerson || keptPerson || `${personName()}.md`) : `${personName()}.md`;
   seed();
   registerVault();
   saveState({ vault, personFile });
@@ -492,4 +530,8 @@ function graph() {
   return graphCache;
 }
 
-module.exports = { start, stop, graph, recall, journal, syncConfig, vaultPath: () => vault };
+module.exports = {
+  start, stop, graph, recall, journal, syncConfig,
+  vaultPath: () => vault,
+  chooseVault, isOwnerAccount, oneDriveAccount,
+};
