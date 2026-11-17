@@ -241,6 +241,7 @@ function kindOf(rel) {
   if (`${base}.md` === personFile.toLowerCase()) return 'person';
   if (rel.toLowerCase().startsWith('memórias/') || rel.toLowerCase().startsWith('memorias/')) return 'memory';
   if (rel.toLowerCase().startsWith('diário/') || rel.toLowerCase().startsWith('diario/')) return 'day';
+  if (rel.toLowerCase().startsWith('assuntos/')) return 'topic';
   return 'note';
 }
 
@@ -438,7 +439,173 @@ function journal(question, answer) {
   const inner = [...listed.matchAll(/^- \[\[[^\]]+\]\]/gm)].map((item) => item[0]);
   if (!inner.includes(link)) inner.push(link);
   spliceMarked('Conversas.md', `# Conversas\n\nO que [[${base}]] falou com a [[Capri]].\n`, inner.join('\n'));
+  try {
+    keepTopic(asked, said);
+  } catch (err) {
+    console.error('[capri] obsidian topic:', err.message);
+  }
   scan();
+}
+
+// A real question becomes a named talk she can open again. The name is his own
+// words, so asking about that subject later finds the same note and the lines inside it.
+const CHATTER = new Set('oi ola eai blz beleza ok okay valeu obrigado obrigada kkk kk haha sim nao entendi show fechou tmj opa eae fala bom dia tarde noite tudo bem vlw obg'.split(/\s+/));
+const TOPIC_DIR = 'Assuntos';
+const TOPIC_CAP = 40;
+
+function worthKeeping(asked) {
+  const words = tokens(asked);
+  if (words.length < 2) return false;
+  if (words.every((word) => CHATTER.has(word))) return false;
+  return String(asked || '').trim().length >= 12;
+}
+
+function topicTitle(asked) {
+  let title = String(asked || '').replace(/\s+/g, ' ').trim();
+  title = title.replace(/^(ei|oi|ol[aá]|opa|e a[ií]|ent[aã]o|seguinte|tipo|queria saber|quero saber|me explica|me fala|me conta|me diz|voc[eê] lembra|lembra quando|lembra|volta naquele assunto de|volta naquele assunto|volta naquele|como eu fa[cç]o pra|como faz pra|como que eu)\s+/i, '').trim();
+  title = title.replace(/[?!.,;:]+$/g, '').trim();
+  const words = title.split(/\s+/).filter(Boolean).slice(0, 8);
+  title = words.join(' ');
+  if (title.length > 64) title = title.slice(0, 64).replace(/\s+\S*$/, '').trim();
+  if (title.length < 4) title = String(asked || '').replace(/\s+/g, ' ').trim().slice(0, 64);
+  if (!title) return 'Assunto';
+  return title.charAt(0).toUpperCase() + title.slice(1);
+}
+
+function listTopics() {
+  const dir = path.join(vault, TOPIC_DIR);
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.md')) continue;
+    const full = path.join(dir, name);
+    let body = '';
+    try {
+      body = fs.readFileSync(full, 'utf8');
+    } catch {
+      continue;
+    }
+    out.push({ rel: `${TOPIC_DIR}/${name}`, full, title: headingOf(name, body), body });
+  }
+  return out;
+}
+
+function sameTopic(title, topic) {
+  const mine = tokens(title);
+  const theirs = tokens(topic.title);
+  if (!mine.length || !theirs.length) return false;
+  const known = new Set(theirs);
+  let shared = 0;
+  for (const word of mine) if (known.has(word)) shared += 1;
+  if (shared >= 2 && shared / Math.min(mine.length, theirs.length) >= 0.5) return true;
+  const fa = fold(title);
+  const fb = fold(topic.title);
+  if (fa.length >= 8 && fb.includes(fa)) return true;
+  if (fb.length >= 8 && fa.includes(fb)) return true;
+  return false;
+}
+
+function continuesLast(asked, last) {
+  const shared = tokens(asked).filter((word) => tokens(last.title).includes(word)).length;
+  if (shared >= 1) return true;
+  const text = String(asked || '').trim();
+  return text.length < 48 && /^(e |mas |ent[aã]o |tipo |sobre isso|disso|desse|dessa|nisso)\b/i.test(text);
+}
+
+function pickTopic(title, asked, topics) {
+  const hit = topics.find((topic) => sameTopic(title, topic));
+  if (hit) return hit;
+  const recent = loadState().lastTopic;
+  if (!recent?.rel || Date.now() - Number(recent.at || 0) >= 20 * 60 * 1000) return null;
+  const last = topics.find((topic) => topic.rel === recent.rel);
+  if (!last || !continuesLast(asked, last)) return null;
+  return last;
+}
+
+function trimTopic(text) {
+  const max = 8000;
+  if (text.length <= max) return text;
+  const bits = text.split(/\n(?=## )/);
+  while (bits.length > 2 && bits.join('\n').length > max) bits.splice(1, 1);
+  return bits.join('\n');
+}
+
+function alreadyThere(body, asked) {
+  const needle = fold(asked).slice(0, 80);
+  if (needle.length < 12) return false;
+  const sections = String(body || '').split(/\n(?=## )/);
+  return fold(sections[sections.length - 1] || '').includes(needle);
+}
+
+function indexTopics(topics) {
+  const lines = topics.map((topic) => `- [[${path.basename(topic.rel, '.md')}]]`);
+  spliceMarked(
+    'Assuntos.md',
+    `# Assuntos\n\nO que [[${personBase()}]] e a [[Capri]] já conversaram, separado por assunto.\n`,
+    lines.join('\n'),
+  );
+}
+
+function keepTopic(asked, said) {
+  if (!started || !vault || !worthKeeping(asked)) return;
+  const title = topicTitle(asked);
+  const topics = listTopics();
+  const chosen = pickTopic(title, asked, topics);
+  const clock = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
+  const section = `## ${clock}\n**${personBase()}:** ${asked}\n**Capri:** ${said || '…'}\n`;
+  let rel;
+  if (chosen) {
+    rel = chosen.rel;
+    if (!alreadyThere(chosen.body, asked)) {
+      writeText(chosen.full, trimTopic(`${chosen.body.replace(/\s*$/, '\n\n')}${section}`));
+    }
+  } else if (topics.length >= TOPIC_CAP) {
+    return;
+  } else {
+    const name = slug(title);
+    const used = new Set(topics.map((topic) => topic.rel));
+    rel = `${TOPIC_DIR}/${name}.md`;
+    let n = 2;
+    while (used.has(rel)) {
+      rel = `${TOPIC_DIR}/${name}-${n}.md`;
+      n += 1;
+    }
+    writeText(path.join(vault, rel), `# ${title}\n\nAssunto da [[Capri]] com [[${personBase()}]].\n\n${section}`);
+  }
+  saveState({ lastTopic: { rel, at: Date.now() } });
+  indexTopics(listTopics());
+}
+
+function wantsOldTalk(folded) {
+  return /\b(lembr|remember|memoria|memory|convers|ontem|yesterday|esqueci|assunto|volta|voltar|aquele|aquela|daquela|continua|continuar)\b/.test(folded);
+}
+
+function quoteTopic(note, words) {
+  const sections = String(note.body || '').split(/\n(?=## )/).slice(1).map((part) => part.trim()).filter(Boolean);
+  if (!sections.length) return note.excerpt || '';
+  const ranked = sections.map((section, index) => {
+    const hay = fold(section);
+    let score = 0;
+    for (const word of words) if (hay.includes(word)) score += 1;
+    return { section, score, index };
+  });
+  ranked.sort((a, b) => b.score - a.score || b.index - a.index);
+  if (!ranked[0] || ranked[0].score === 0) return sections.slice(-2).join('\n').slice(0, 1100);
+  const picked = [];
+  let size = 0;
+  for (const item of ranked) {
+    if (picked.length && item.score === 0) break;
+    picked.push(item);
+    size += item.section.length;
+    if (picked.length >= 3 || size >= 1000) break;
+  }
+  picked.sort((a, b) => a.index - b.index);
+  return picked.map((item) => item.section).join('\n').slice(0, 1100);
 }
 
 function recall(question) {
@@ -446,24 +613,40 @@ function recall(question) {
   const words = tokens(question);
   const folded = fold(question);
   const wantsDiary = /\b(lembr|remember|memoria|memory|convers|ontem|yesterday|esqueci)\b/.test(folded);
+  const wantsTopic = wantsOldTalk(folded);
   const ranked = notes
     .map((note) => {
       const hayTitle = fold(note.title);
-      const hayBody = fold(note.excerpt);
+      const hayBody = note.kind === 'topic' ? fold(note.body).slice(0, 8000) : fold(note.excerpt);
       let score = 0;
       for (const word of words) {
-        if (hayTitle.includes(word)) score += 5;
-        if (hayBody.includes(word)) score += 1;
+        if (hayTitle.includes(word)) score += note.kind === 'topic' ? 8 : 5;
+        if (hayBody.includes(word)) score += note.kind === 'topic' ? 2 : 1;
       }
       if (wantsDiary && note.kind === 'day') score += 3;
+      if (wantsTopic && note.kind === 'topic') score += 4;
       return { note, score };
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
-  if (!ranked.length && !wantsDiary) return '';
+  const best = ranked[0];
+  if (best && best.note.kind === 'topic' && best.score >= 6) {
+    const lines = [
+      `Saved talk "${best.note.title}". Use this part of that conversation when it helps. Do not mention notes or files:`,
+      quoteTopic(best.note, words),
+    ];
+    const other = ranked.find((item) => item.note.id !== best.note.id && item.note.kind !== 'topic');
+    if (other) lines.push(`${other.note.title}: ${other.note.excerpt}`);
+    return lines.join('\n').slice(0, 1600);
+  }
+  if (!ranked.length && !wantsDiary && !wantsTopic) return '';
   const titles = notes.map((note) => note.title).filter(Boolean).slice(0, 40).join(', ');
   const lines = [`Vault notes: ${titles}.`];
+  if (wantsTopic) {
+    const names = notes.filter((note) => note.kind === 'topic').map((note) => note.title).filter(Boolean).slice(0, 20);
+    if (names.length) lines.push(`Saved topics: ${names.join(', ')}.`);
+  }
   for (const item of ranked) lines.push(`${item.note.title}: ${item.note.excerpt}`);
   if (wantsDiary) {
     const day = [...notes].reverse().find((note) => note.kind === 'day');

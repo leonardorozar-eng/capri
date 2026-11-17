@@ -1000,6 +1000,7 @@ const BRAIN_COLOR = {
   person: '#3ef0ff',
   memory: '#d7a4ff',
   day: '#ffb45e',
+  topic: '#8ef0b0',
   note: '#f6e9ff',
 };
 
